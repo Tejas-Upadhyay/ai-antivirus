@@ -1,0 +1,51 @@
+# Model Configuration
+static:
+  ember_lgbm:
+    n_estimators: 2000
+    learning_rate: 0.05
+    num_leaves: 255
+    objective: binary
+    metric: auc
+    feature_fraction: 0.8
+    bagging_fraction: 0.8
+    bagging_freq: 5
+    min_data_in_leaf: 100
+    lambda_l1: 0.1
+    lambda_l2: 0.1
+    verbose: -1
+
+  malconv:
+    embedding_dim: 8
+    channels: 128
+    window_size: 512
+    stride: 256
+    fc_dim: 128
+    max_len: 2_000_000
+
+dynamic:
+  transformer:
+    vocab_size: 50000  # syscall IDs
+    d_model: 256
+    n_heads: 8
+    n_layers: 6
+    d_ff: 1024
+    max_seq_len: 512
+    dropout: 0.1
+    num_classes: 2
+
+ensemble:
+  stacking:
+    meta_learner: logistic
+    cv_folds: 5
+    calibration: isotonic
+
+thresholds:
+  target_fpr: 0.001  # 0.1% false positive rate
+  conformal_alpha: 0.05
+
+data:
+  train_split: 0.8
+  val_split: 0.1
+  test_split: 0.1
+  temporal_split: true
+  dedup_hash: sha256
