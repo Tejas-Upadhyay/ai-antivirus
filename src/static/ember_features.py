@@ -23,8 +23,27 @@ class EmberFeatureExtractor:
         """Extract all EMBER feature groups."""
         try:
             binary = lief.parse(filepath)
-            if not binary or not binary.header:
+            if not binary:
                 return self._empty_features()
+
+            # Check if it's a PE binary (Windows)
+            is_pe = False
+            try:
+                import lief
+                is_pe = isinstance(binary, lief.PE.Binary)
+            except Exception:
+                # Fallback: check for PE attributes
+                is_pe = hasattr(binary, 'optional_header') and hasattr(binary, 'sections')
+
+            if not is_pe:
+                # Not a PE file - return minimal features (zeros for PE-specific)
+                # but still extract strings, byte histograms which are format-agnostic
+                features = self._empty_features()
+                features.update(self._string_features(binary))
+                features.update(self._byte_histogram(filepath))
+                features.update(self._byte_entropy_histogram(filepath))
+                return features
+
         except Exception:
             return self._empty_features()
 
@@ -54,16 +73,48 @@ class EmberFeatureExtractor:
 
     def _general_file_info(self, binary) -> Dict[str, np.ndarray]:
         feats = np.zeros(10, dtype=np.float32)
-        feats[0] = binary.header.sizeof_headers if binary.header else 0
-        feats[1] = binary.optional_header.sizeof_code if binary.optional_header else 0
-        feats[2] = binary.optional_header.sizeof_initialized_data if binary.optional_header else 0
-        feats[3] = binary.optional_header.sizeof_uninitialized_data if binary.optional_header else 0
-        feats[4] = binary.optional_header.sizeof_image if binary.optional_header else 0
-        feats[5] = len(binary.sections)
-        feats[6] = len(binary.imports) if binary.imports else 0
-        feats[7] = len(binary.exported_functions) if binary.exported_functions else 0
-        feats[8] = binary.optional_header.address_of_entry_point if binary.optional_header else 0
-        feats[9] = binary.optional_header.base_of_code if binary.optional_header else 0
+        try:
+            if binary.header:
+                # PE-specific
+                if hasattr(binary.header, 'sizeof_headers'):
+                    feats[0] = binary.header.sizeof_headers
+                elif hasattr(binary.header, 'header_size'):
+                    feats[0] = binary.header.header_size
+        except Exception:
+            pass
+
+        try:
+            if binary.optional_header:
+                if hasattr(binary.optional_header, 'sizeof_code'):
+                    feats[1] = binary.optional_header.sizeof_code
+                if hasattr(binary.optional_header, 'sizeof_initialized_data'):
+                    feats[2] = binary.optional_header.sizeof_initialized_data
+                if hasattr(binary.optional_header, 'sizeof_uninitialized_data'):
+                    feats[3] = binary.optional_header.sizeof_uninitialized_data
+                if hasattr(binary.optional_header, 'sizeof_image'):
+                    feats[4] = binary.optional_header.sizeof_image
+                if hasattr(binary.optional_header, 'address_of_entry_point'):
+                    feats[8] = binary.optional_header.address_of_entry_point
+                if hasattr(binary.optional_header, 'base_of_code'):
+                    feats[9] = binary.optional_header.base_of_code
+        except Exception:
+            pass
+
+        try:
+            feats[5] = len(binary.sections) if binary.sections else 0
+        except Exception:
+            pass
+
+        try:
+            feats[6] = len(binary.imports) if binary.imports else 0
+        except Exception:
+            pass
+
+        try:
+            feats[7] = len(binary.exported_functions) if binary.exported_functions else 0
+        except Exception:
+            pass
+
         return {'general': feats}
 
     def _header_features(self, binary) -> Dict[str, np.ndarray]:
@@ -74,48 +125,40 @@ class EmberFeatureExtractor:
         h = binary.header
         oh = binary.optional_header
 
-        feats[0] = h.machine
-        feats[1] = h.numberof_sections
-        feats[2] = h.time_date_stamps
-        feats[3] = h.pointerto_symbol_table
-        feats[4] = h.numberof_symbols
-        feats[5] = h.sizeof_optional_header
-        feats[6] = h.characteristics
+        # PE header fields (with fallbacks)
+        attrs_h = ['machine', 'numberof_sections', 'time_date_stamps',
+                   'pointerto_symbol_table', 'numberof_symbols',
+                   'sizeof_optional_header', 'characteristics']
+        attrs_oh = ['magic', 'major_linker_version', 'minor_linker_version',
+                    'sizeof_code', 'sizeof_initialized_data', 'sizeof_uninitialized_data',
+                    'addressof_entrypoint', 'baseof_code', 'imagebase',
+                    'section_alignment', 'file_alignment',
+                    'major_operating_system_version', 'minor_operating_system_version',
+                    'major_image_version', 'minor_image_version',
+                    'major_subsystem_version', 'minor_subsystem_version',
+                    'win32_version_value', 'sizeof_image', 'sizeof_headers',
+                    'checksum', 'subsystem', 'dll_characteristics',
+                    'sizeof_stack_reserve', 'sizeof_stack_commit',
+                    'sizeof_heap_reserve', 'sizeof_heap_commit',
+                    'loader_flags', 'numberof_rva_and_sizes']
 
-        feats[7] = oh.magic
-        feats[8] = oh.major_linker_version
-        feats[9] = oh.minor_linker_version
-        feats[10] = oh.sizeof_code
-        feats[11] = oh.sizeof_initialized_data
-        feats[12] = oh.sizeof_uninitialized_data
-        feats[13] = oh.addressof_entrypoint
-        feats[14] = oh.baseof_code
-        feats[15] = oh.imagebase
-        feats[16] = oh.section_alignment
-        feats[17] = oh.file_alignment
-        feats[18] = oh.major_operating_system_version
-        feats[19] = oh.minor_operating_system_version
-        feats[20] = oh.major_image_version
-        feats[21] = oh.minor_image_version
-        feats[22] = oh.major_subsystem_version
-        feats[23] = oh.minor_subsystem_version
-        feats[24] = oh.win32_version_value
-        feats[25] = oh.sizeof_image
-        feats[26] = oh.sizeof_headers
-        feats[27] = oh.checksum
-        feats[28] = oh.subsystem
-        feats[29] = oh.dll_characteristics
-        feats[30] = oh.sizeof_stack_reserve
-        feats[31] = oh.sizeof_stack_commit
-        feats[32] = oh.sizeof_heap_reserve
-        feats[33] = oh.sizeof_heap_commit
-        feats[34] = oh.loader_flags
-        feats[35] = oh.numberof_rva_and_sizes
+        for i, attr in enumerate(attrs_h):
+            if i < 7 and hasattr(h, attr):
+                feats[i] = getattr(h, attr)
 
-        data_dirs = oh.data_directories
-        for i, d in enumerate(data_dirs[:10]):
-            feats[36 + i*2] = d.rva
-            feats[36 + i*2 + 1] = d.size
+        for i, attr in enumerate(attrs_oh):
+            idx = 7 + i
+            if idx < 36 and hasattr(oh, attr):
+                feats[idx] = getattr(oh, attr)
+
+        # Data directories
+        try:
+            data_dirs = oh.data_directories
+            for i, d in enumerate(data_dirs[:10]):
+                feats[36 + i*2] = getattr(d, 'rva', 0)
+                feats[36 + i*2 + 1] = getattr(d, 'size', 0)
+        except Exception:
+            pass
 
         return {'header': feats}
 
@@ -193,13 +236,27 @@ class EmberFeatureExtractor:
         feats = np.zeros(104, dtype=np.float32)
         strings = []
 
-        for sec in binary.sections:
-            if sec.content.size > 0:
+        # Try to get sections (works for PE, ELF, Mach-O)
+        try:
+            sections = getattr(binary, 'sections', [])
+            for sec in sections:
                 try:
-                    content = bytes(sec.content)
-                    strings.extend(self._extract_strings(content))
+                    content = bytes(sec.content) if hasattr(sec, 'content') else b''
+                    if content:
+                        strings.extend(self._extract_strings(content))
                 except Exception:
                     pass
+        except Exception:
+            pass
+
+        # Fallback: extract from whole file
+        if not strings:
+            try:
+                with open(getattr(binary, 'filepath', ''), 'rb') as f:
+                    content = f.read(1_000_000)
+                    strings.extend(self._extract_strings(content))
+            except Exception:
+                pass
 
         if not strings:
             return {'strings': feats}
@@ -276,7 +333,16 @@ class EmberFeatureExtractor:
     def flatten(self, features: Dict[str, np.ndarray]) -> np.ndarray:
         """Concatenate all feature groups into single vector."""
         order = ['general', 'header', 'section', 'imports', 'exports', 'strings', 'byte_hist', 'byte_entropy']
-        return np.concatenate([features[k] for k in order]).astype(np.float32)
+        vec = np.concatenate([features[k] for k in order]).astype(np.float32)
+
+        # Ensure consistent length (EMBER = 2381)
+        expected = 2381
+        if len(vec) < expected:
+            vec = np.pad(vec, (0, expected - len(vec)), mode='constant')
+        elif len(vec) > expected:
+            vec = vec[:expected]
+
+        return vec
 
 
 def extract_ember_features(filepath: str) -> np.ndarray:
